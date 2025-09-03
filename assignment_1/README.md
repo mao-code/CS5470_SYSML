@@ -133,7 +133,7 @@ X-axis is the prompt index (not the original index of prompt) and the y-axis is 
 
 ### Submission Requirements
 
-Submit the following components:
+Submit the following components in a zip folder to Canvas: <netid\>_a1.zip:
 
 #### 1. Report (PDF format) (80%)
 - All requested plots (TTFT and TPOT visualizations) and a brief analysis of what's going on. (40%)
