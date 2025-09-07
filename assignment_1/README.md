@@ -59,7 +59,7 @@ conda create -p /pscratch/sd/e/$USER/sysml python=3.10.12
 - `meta-llama/Llama-3.1-8B`
 2. Log in your account from command line
    ```bash
-   huggingface-cli login
+   hf auth login
    # Create token through the url and copy-paste
    ```
 #### Step 3: Download model and tokenizer
