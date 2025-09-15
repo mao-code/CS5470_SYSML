@@ -66,7 +66,7 @@ conda create -p /pscratch/sd/e/$USER/sysml python=3.10.12
 This is required as vLLM could not download models on-the-fly on Perlmutter GPU nodes due to restrictions on large file download.
 
 ```
-python download.py --model-id meta-llama/Llama-3.1-8B ----cache-dir /pscratch/sd/<first_letter_of_usrname>/<usrname>/huggingface
+python download.py --model-id meta-llama/Llama-3.1-8B --cache-dir $PSCRATCH/huggingface
 ```
 
 **Note**: Due to disk space limitation on `home` file system, we encourage using `pscratch` for storing model weights. More information could be found [here](https://docs.nersc.gov/filesystems/perlmutter-scratch/).
