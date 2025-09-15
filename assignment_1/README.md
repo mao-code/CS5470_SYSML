@@ -66,12 +66,12 @@ conda create -p /pscratch/sd/e/$USER/sysml python=3.10.12
 This is required as vLLM could not download models on-the-fly on Perlmutter GPU nodes due to restrictions on large file download.
 
 ```
-python download.py --model-id meta-llama/Llama-3.1-8B ----cache-dir /pscratch/sd/<first_letter_of_usrname>/<usrname>/huggingface
+python download.py --model-id meta-llama/Llama-3.1-8B --cache-dir $PSCRATCH/huggingface
 ```
 
 **Note**: Due to disk space limitation on `home` file system, we encourage using `pscratch` for storing model weights. More information could be found [here](https://docs.nersc.gov/filesystems/perlmutter-scratch/).
 
-**Note**: remember to set environment variable `HF_HOME=/pscratch/sd/<first_letter_of_usrname>/<usrname>/huggingface` in your running environment such that HF library could select locally-cached model weights instead of pulling from remote repository.
+**Note**: remember to set environment variable `export HF_HOME=$PSCRATCH/huggingface` in your running environment such that HF library could select locally-cached model weights instead of pulling from remote repository.
 
 <!-- TODO Do we need this 
 
@@ -95,7 +95,7 @@ Within the homework folder, we have provided `server.sh`, a script that starts a
 1. Allocate interactive GPU node using `salloc --nodes 1 --qos interactive --time 01:00:00 --constraint gpu --gpus 1 --account <projectID>`.
 2. Remember to make those scripts executable.
 3. Spawning two terminals would be useful, one for server and one for client. They should be on the same GPU node. Access the allocated node using `ssh <GPU_node_ID>` if the other terminal is on the login node.
-4. You need to login to Huggingface again on GPU nodes, and set `HF_HOME` to `HF_HOME=/pscratch/sd/<first_letter_of_usrname>/<usrname>/huggingface` for both server and client terminal.
+4. You need to login to Huggingface again on GPU nodes, and set `HF_HOME` to `HF_HOME=$PSCRATCH/huggingface` for both server and client terminal.
 5. You might wait for several minutes until the serving engine is up and running.
 
 ### Task 2: Multi-GPU Benchmarking
