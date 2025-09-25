@@ -134,7 +134,10 @@ To implement fair scheduling, we need to (1) update the `_get_priority` function
 
 Note that `schedule_running` will also generate preempted sequences, but that is triggered by not having enought budget for current running sequences (the KV cache keeps growing for the running sequences). We don't need to care about it.
 
+For the following tasks, edit the `scheduler.py` file and copy-paste it to vLLM codebase.
+
 **Task 1: Update the scheduler function of vLLM**
+
 
 Find the `def _schedule(self) -> SchedulerOutputs` function and update the code to below.
 
