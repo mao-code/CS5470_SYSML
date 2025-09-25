@@ -171,6 +171,8 @@ If implemented correctly, the TTFTs should reduce and you should be able to prod
 
 The TPOT will become worse, which is expected due to our scheduling policy.
 
+**Note that there could be many ways to implement fair scheduling. You don't have to follow our guidelines. As long as the TTFT improves, we will give you points.**
+
 ![Figure 2: Sorted TTFTs of requests in the burst comparing vLLM and CFS you implemented](./ttft_plot.png)
 
 **Task 3: Answer the following MCQs**
@@ -216,6 +218,6 @@ Submit the following:
    - Answer to the MCQs using the format – section, MCQ #, answer. [10%]
 
 2. **Code including:**
-   - scheduler.py file with the CFS scheduler. [40%]
+   - scheduler.py file with the CFS scheduler. If you modify the vLLM server script, attach it as well. We will execute your server script. [40%]
 
 3. **Data files with benchmark results** [10%]
