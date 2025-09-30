@@ -24,6 +24,7 @@ On the client side, run:
 """
 import argparse
 import asyncio
+import csv
 import json
 import os
 import random
@@ -31,7 +32,8 @@ import time
 import warnings
 from dataclasses import dataclass
 from datetime import datetime
-from typing import AsyncGenerator, List, Optional, Tuple
+from pathlib import Path
+from typing import AsyncGenerator, Dict, List, Optional, Tuple
 
 import numpy as np
 from bench_utils import (ASYNC_REQUEST_FUNCS, RequestFuncInput,
@@ -255,7 +257,7 @@ def calculate_metrics(
     outputs: List[RequestFuncOutput],
     dur_s: float,
     tokenizer: PreTrainedTokenizerBase,
-) -> Tuple[BenchmarkMetrics, List[int]]:
+) -> Tuple[BenchmarkMetrics, List[int], List[Dict[str, object]]]:
     actual_output_lens = []
     total_input = 0
     completed = 0
@@ -264,7 +266,18 @@ def calculate_metrics(
     ttfts = []
     latencies = []
     sts = []
+    request_records: List[Dict[str, object]] = []
     for i in range(len(outputs)):
+        record: Dict[str, object] = {
+            "prompt_index": i,
+            "input_tokens": input_requests[i][1],
+            "output_tokens": None,
+            "ttft_ms": None,
+            "tpot_ms": None,
+            "latency_ms": None,
+            "start_time": outputs[i].start_time,
+            "success": outputs[i].success,
+        }
         if outputs[i].success:
             # We use the tokenizer to count the number of output tokens for all
             # serving backends instead of looking at len(outputs[i].itl) since
@@ -275,9 +288,14 @@ def calculate_metrics(
                           add_special_tokens=False).input_ids)
             actual_output_lens.append(output_len)
             total_input += input_requests[i][1]
+            record["output_tokens"] = output_len
+            record["ttft_ms"] = outputs[i].ttft * 1000
+            record["latency_ms"] = outputs[i].latency * 1000
             if output_len > 1:
-                tpots.append(
-                    (outputs[i].latency - outputs[i].ttft) / (output_len - 1))
+                tpot = ((outputs[i].latency - outputs[i].ttft)
+                        / (output_len - 1))
+                tpots.append(tpot)
+                record["tpot_ms"] = tpot * 1000
             itls += outputs[i].itl
             ttfts.append(outputs[i].ttft)
             completed += 1
@@ -287,6 +305,7 @@ def calculate_metrics(
                 print('TTFT: {} TPOT: {} INPUT: {} OUTPUT: {} LATENCY: {} START: {}'.format(ttfts[-1], tpots[-1], input_requests[i][1], output_len, latencies[-1], sts[-1]))
         else:
             actual_output_lens.append(0)
+        request_records.append(record)
 
     # for latency in latencies:
     #     print('[LAT]: {} ms'.format(latency))
@@ -315,7 +334,7 @@ def calculate_metrics(
         p99_itl_ms=np.percentile(itls or 0, 99) * 1000,
     )
 
-    return metrics, actual_output_lens
+    return metrics, actual_output_lens, request_records
 
 
 async def benchmark(
@@ -380,7 +399,7 @@ async def benchmark(
 
     benchmark_duration = time.perf_counter() - benchmark_start_time
 
-    metrics, actual_output_lens = calculate_metrics(
+    metrics, actual_output_lens, request_records = calculate_metrics(
         input_requests=input_requests,
         outputs=outputs,
         dur_s=benchmark_duration,
@@ -441,8 +460,45 @@ async def benchmark(
         "itls": [output.itl for output in outputs],
         "generated_texts": [output.generated_text for output in outputs],
         "errors": [output.error for output in outputs],
+        "request_stats": request_records,
     }
     return result
+
+
+def write_ttft_tpot_csv(request_records: List[Dict[str, object]], csv_path: Path) -> None:
+    if not request_records:
+        warnings.warn("No request records available to write to CSV.", stacklevel=2)
+        return
+
+    fieldnames = [
+        "prompt_index",
+        "input_tokens",
+        "output_tokens",
+        "success",
+        "ttft_ms",
+        "tpot_ms",
+        "latency_ms",
+        "start_time",
+    ]
+
+    # Round numeric fields for readability before writing.
+    processed_records: List[Dict[str, object]] = []
+    for record in request_records:
+        processed_record: Dict[str, object] = {}
+        for key, value in record.items():
+            if isinstance(value, float):
+                processed_record[key] = round(value, 3)
+            else:
+                processed_record[key] = value
+        processed_records.append(processed_record)
+
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    with csv_path.open("w", newline="") as csv_file:
+        writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(processed_records)
+
+    print(f"Saved per-request TTFT/TPOT metrics to {csv_path}")
 
 
 def main(args: argparse.Namespace):
@@ -531,6 +587,12 @@ def main(args: argparse.Namespace):
             request_rate=args.request_rate,
             disable_tqdm=args.disable_tqdm,
         ))
+
+    csv_output_path = (Path(args.csv_output).expanduser()
+                       if args.csv_output else Path(__file__).resolve().parent
+                       / "ttft_tpot_data.csv")
+    write_ttft_tpot_csv(benchmark_result.get("request_stats", []),
+                        csv_output_path)
 
     # Save config and results to json
     if args.save_result:
@@ -706,6 +768,15 @@ if __name__ == "__main__":
         default=None,
         help="Specify directory to save benchmark json results."
         "If not specified, results are saved in the current directory.",
+    )
+    parser.add_argument(
+        "--csv-output",
+        type=str,
+        default=None,
+        help=(
+            "Optional path to store per-request TTFT/TPOT metrics as CSV. "
+            "Defaults to assignment_2/ttft_tpot_data.csv."
+        ),
     )
     parser.add_argument("--long-prompts", type=int, default=0)
     parser.add_argument("--long-prompt-len",
