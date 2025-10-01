@@ -171,7 +171,7 @@ If implemented correctly, the TTFTs should reduce and you should be able to prod
 
 The TPOT will become worse, which is expected due to our scheduling policy.
 
-**Note that there could be many ways to implement fair scheduling. You don't have to follow our guidelines. As long as the TTFT improves, we will give you points.**
+**Note that there could be many ways to implement fair scheduling. You don't have to follow our guidelines. 40 points (full points) if the P99 TTFT is lower than 8000ms. 10 points will be deducted for each second exceeding 8000ms for P99 TTFT.**
 
 ![Figure 2: Sorted TTFTs of requests in the burst comparing vLLM and CFS you implemented](./ttft_plot.png)
 
