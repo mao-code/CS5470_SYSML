@@ -94,7 +94,7 @@ Within the homework folder, we have provided `server.sh`, a script that starts a
 (d) Plot the GPU KV cache usage over time using the server log. 
 
 
-Plot the sorted TTFTs, you should see a graph like below (Figure 3.1), though you will have 50 prompts along x-axis.
+Plot the TTFTs, you should see a graph like below (Figure 3.1), though you will have 50 prompts along x-axis.
 ![Figure 1: Sorted TTFTs of requests in the burst](./ttft_vllm.png)
 
 **Task 2: Answer the following MCQs**
@@ -218,6 +218,8 @@ Submit the following:
    - Answer to the MCQs using the format – section, MCQ #, answer. [10%]
 
 2. **Code including:**
-   - scheduler.py file with the CFS scheduler. If you modify the vLLM server script, attach it as well. We will execute your server script. [40%]
+   - scheduler.py file with the CFS scheduler and client benchmark result. If you modify the vLLM server script, attach it as well. We will execute your server script. [40%]
+      - 40 points (full points) if the P99 TTFT is lower than 8000ms.
+      - 10 points will be deducted for each second exceeding 8000ms for P99 TTFT.
 
 3. **Data files with benchmark results** [10%]
