@@ -953,8 +953,10 @@ class Scheduler:
         else:
             return prompt_limit
 
-    def _get_priority(self,
-                      seq_group: SequenceGroup) -> Tuple[Optional[int], float]:
+    def _get_priority(
+        self,
+        seq_group: SequenceGroup,
+    ) -> Tuple[Optional[int], int, float]:
         """Get the priority of the sequence group.
         Highest preference to user-defined priority, followed by arrival time.
         Args:
@@ -962,8 +964,12 @@ class Scheduler:
         Returns:
             The priority of the sequence group.
         """
-        ### UPDATE THIS ###
-        return seq_group.priority, seq_group.arrival_time
+        num_generated_tokens = sum(
+            seq.get_output_len() for seq in seq_group.get_seqs()
+            if not seq.is_finished())
+
+        return (seq_group.priority, num_generated_tokens,
+                seq_group.arrival_time)
 
     def _schedule_priority_preemption(
         self,
@@ -985,6 +991,8 @@ class Scheduler:
 
         blocks_to_swap_out: List[Tuple[int, int]] = []
         force_preemption_count = 0
+
+        swapped_victims: List[SequenceGroup] = []
 
         if waiting_queue:
             seq_group = waiting_queue.popleft()
@@ -1018,18 +1026,31 @@ class Scheduler:
                                          num_running_seqs)
 
                 # Preempt out the victim sequence group
+                prev_mode = self.user_specified_preemption_mode
+                self.user_specified_preemption_mode = "swap"
                 self._preempt(vseq_group, blocks_to_swap_out)
-                waiting_queue.appendleft(vseq_group)
+                self.user_specified_preemption_mode = prev_mode
+                swapped_victims.append(vseq_group)
                 force_preemption_count += 1
             # Put the sequence back into the waiting queue
             waiting_queue.appendleft(seq_group)
 
         else:
-            ## UPDATE THIS ##
-            pass
+            if running_queue and self.swapped:
+                vseq_group = running_queue.pop()
+                prev_mode = self.user_specified_preemption_mode
+                self.user_specified_preemption_mode = "swap"
+                self._preempt(vseq_group, blocks_to_swap_out)
+                self.user_specified_preemption_mode = prev_mode
+                swapped_victims.append(vseq_group)
+                force_preemption_count += 1
 
 
         waiting_queue = deque(sorted(waiting_queue, key=self._get_priority))
+
+        if swapped_victims:
+            self.swapped.extend(swapped_victims)
+            self.swapped = deque(sorted(self.swapped, key=self._get_priority))
 
         self.waiting = waiting_queue
         self.running = running_queue
@@ -1235,15 +1256,176 @@ class Scheduler:
     num_iters = 0
 
     def _schedule_cfs(self) -> SchedulerOutputs:
-        """Schedule queued requests.
+        """Schedule queued requests with a preemptive CFS-inspired policy."""
 
-        The current policy is designed to optimize the throughput. First,
-        it batches as many prefill requests as possible. And it schedules
-        decodes. If there's a pressure on GPU memory, decode requests can
-        be swapped or preempted.
         """
-        ### UPDATE THIS ###
-        return None
+        Prerequisites:
+
+        1. "SchedulingBudget" 
+            is a per-iteration accounting object that limits how many things can be scheduled on GPU at once:
+            a. token_budget → max number of tokens in a batch (max_num_batched_tokens).
+            b. max_num_seqs → max number of active sequences (max_num_seqs).
+
+            It tracks:
+                a. how many tokens are already batched,
+                b. how many sequences are running,
+                c. cached vs. uncached tokens. This ensures we don't exceed GPU KV-cache or throughput limits.
+
+        2. Queues
+        The scheduler manages sequence groups (prompts + their generations) through state queues:
+            1. Waiting queue → new requests or preempted requests not yet admitted to GPU. (Prefill stage: the initial prompt tokens to encode).
+            2. Running queue → active requests on GPU, doing decoding (token-by-token generation) or chunked prefills.
+            3. Swapped queue → requests evicted from GPU memory (KV cache moved to CPU or marked for recompute) waiting to be resumed.
+
+        3. Overall Flow (Request → GPU)
+            1. Client submits request
+                → becomes a SequenceGroup in waiting queue.
+
+            2. Scheduler iteration (schedule())
+                a. Build a SchedulingBudget.
+                b. Try to admit as many prefills (waiting prompts) as fit.
+                c. If budget left, admit/continue decodes from running queue.
+                d. If memory freed, optionally bring back swapped requests.
+                e. If over capacity, preempt low-priority requests (move to swapped or waiting).
+
+            3. SchedulerOutputs created
+                → contains which groups to run, which blocks to swap in/out, ignored ones, etc.
+
+            4. Engine executes on GPU
+                → forward pass runs for scheduled batch (prefill chunk or 1 decode token).
+                → KV cache updated.
+
+            5. Next iteration
+                → scheduler repeats: checks queues, applies budget, builds next batch.
+
+            Overall,
+            1. Build budget (tokens + sequences limit).
+            2. Prefills first: gather prompt tokens (and KV cache blocks if prefix cache enabled) from the waiting queue, batch them, and will be sent to GPU for prefill.
+            3. If budget left: admit decodes from the running queue, each decoding 1 new token per sequence.
+            4. If space (budget) available: bring back swapped requests from CPU → GPU (resume decoding).
+            5. If over capacity (budget): preempt requests (move from running → waiting/swapped).
+        """
+
+        budget = SchedulingBudget(
+            token_budget=self.scheduler_config.max_num_batched_tokens,
+            max_num_seqs=self.scheduler_config.max_num_seqs,
+        )
+
+        for seq_group in self.running:
+            budget.add_num_seqs(seq_group.request_id, seq_group.get_max_num_running_seqs())
+
+        # Preemption only happens in the running queue
+        force_preemptions = self._schedule_priority_preemption(budget)
+
+        curr_loras = (set(
+            seq_group.lora_int_id for seq_group in self.running
+            if seq_group.lora_int_id > 0) if self.lora_enabled else None)
+
+        prefills = SchedulerPrefillOutputs.create_empty()
+        running_scheduled = SchedulerRunningOutputs.create_empty()
+        swapped_in = SchedulerSwappedInOutputs.create_empty()
+
+        # ----------------------------------------------------------------------
+        """
+        1. If there are any swapped requests: skip new prefills this iteration.
+        2. If no prefills were scheduled, schedule running decodes (1 token per seq).
+        3. Only if step 2 didn't cause any preemption, try to swap-in from the swapped queue.
+        """
+        if not self.swapped:
+            prefills = self._schedule_prefills(budget,
+                                               curr_loras,
+                                               enable_chunking=False)
+
+        if len(prefills.seq_groups) == 0:
+            running_scheduled = self._schedule_running(budget,
+                                                       curr_loras,
+                                                       enable_chunking=False)
+
+            if (len(running_scheduled.preempted) +
+                    len(running_scheduled.swapped_out) == 0):
+                swapped_in = self._schedule_swapped(budget, curr_loras)
+        # ----------------------------------------------------------------------
+
+        assert (budget.num_batched_tokens
+                <= self.scheduler_config.max_num_batched_tokens)
+        assert budget.num_curr_seqs <= self.scheduler_config.max_num_seqs
+
+        self.waiting.extendleft(running_scheduled.preempted)
+
+        if len(prefills.seq_groups) > 0:
+            self.running.extend([s.seq_group for s in prefills.seq_groups])
+
+        self.running.extend(running_scheduled.decode_seq_groups_list)
+
+        if len(swapped_in.decode_seq_groups) > 0:
+            self.running.extend(
+                [s.seq_group for s in swapped_in.decode_seq_groups])
+
+        self.swapped.extend(running_scheduled.swapped_out)
+        if self.swapped:
+            self.swapped = deque(sorted(self.swapped, key=self._get_priority))
+
+        preempted = (len(running_scheduled.preempted) +
+                     len(running_scheduled.swapped_out) +
+                     force_preemptions)
+
+        # There should be no prefill from running queue because this policy
+        # doesn't allow chunked prefills.
+        assert len(running_scheduled.prefill_seq_groups) == 0
+        assert len(swapped_in.prefill_seq_groups) == 0
+
+        num_prefill_groups = len(prefills.seq_groups)
+        ignored_seq_groups_for_embeds = list[SequenceGroup]()
+        if num_prefill_groups > 0:
+            scheduled_seq_groups = prefills.seq_groups
+            scheduled_seq_groups.extend(running_scheduled.decode_seq_groups)
+            ignored_seq_groups_for_embeds.clear()
+        else:
+            scheduled_seq_groups = running_scheduled.decode_seq_groups
+            if len(scheduled_seq_groups) > 0:
+                using_prompt_embeds = scheduled_seq_groups[
+                    0].seq_group.uses_prompt_embeds()
+                ignored_seq_groups_for_embeds.clear()
+                indices_ignored = list[int]()
+                for i, schedule_seq_group in enumerate(scheduled_seq_groups):
+                    if using_prompt_embeds != (
+                            schedule_seq_group.seq_group.uses_prompt_embeds()):
+                        ignored_seq_groups_for_embeds.append(
+                            schedule_seq_group.seq_group)
+                        indices_ignored.append(i)
+                if len(ignored_seq_groups_for_embeds) > 0:
+                    scheduled_seq_groups = [
+                        group for i, group in enumerate(scheduled_seq_groups)
+                        if i not in indices_ignored
+                    ]
+            else:
+                ignored_seq_groups_for_embeds.clear()
+
+        scheduled_seq_groups.extend(swapped_in.decode_seq_groups)
+
+        blocks_to_copy = running_scheduled.blocks_to_copy
+        blocks_to_copy.extend(swapped_in.blocks_to_copy)
+
+        ignored_seq_groups = prefills.ignored_seq_groups
+        ignored_seq_groups.extend(ignored_seq_groups_for_embeds)
+        ignored_seq_groups.extend(swapped_in.infeasible_seq_groups)
+
+        if num_prefill_groups > 0:
+            self.prev_prompt = True
+
+        return SchedulerOutputs(
+            scheduled_seq_groups=scheduled_seq_groups,
+            num_prefill_groups=num_prefill_groups,
+            num_batched_tokens=budget.num_batched_tokens +
+            budget.num_cached_tokens,
+            blocks_to_swap_in=swapped_in.blocks_to_swap_in,
+            blocks_to_swap_out=running_scheduled.blocks_to_swap_out,
+            blocks_to_copy=blocks_to_copy,
+            ignored_seq_groups=ignored_seq_groups,
+            num_lookahead_slots=running_scheduled.num_lookahead_slots,
+            running_queue_size=len(self.running),
+            preempted=preempted,
+        )
 
     def _schedule_default(self) -> SchedulerOutputs:
         """Schedule queued requests.
@@ -1505,11 +1687,17 @@ class Scheduler:
 
     def _schedule(self) -> SchedulerOutputs:
         """Schedule queued requests."""
+        # Iteration: 
+        # * a counter of how many times the scheduler has been invoked
+        # * An iteration is one call to the scheduler's decision routine that builds the next batch to execute
         if self.scheduler_config.chunked_prefill_enabled:
             return self._schedule_chunked_prefill()
-        else:
-            ### UPDATE THIS ###
-            return self._schedule_default()
+        Scheduler.num_iters += 1
+        if Scheduler.num_iters == 100:
+            Scheduler.num_iters = 0
+        if Scheduler.num_iters % 10 == 0:
+            return self._schedule_cfs()
+        return self._schedule_default()
         
     def _can_append_slots(self, seq_group: SequenceGroup,
                           enable_chunking: bool) -> bool:
