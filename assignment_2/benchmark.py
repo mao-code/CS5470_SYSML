@@ -30,10 +30,10 @@ import os
 import random
 import time
 import warnings
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from datetime import datetime
 from pathlib import Path
-from typing import AsyncGenerator, Dict, List, Optional, Tuple
+from typing import AsyncGenerator, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 from bench_utils import (ASYNC_REQUEST_FUNCS, RequestFuncInput,
@@ -234,6 +234,100 @@ def sample_sonnet_requests(
 
     return sampled_requests
 
+def build_benchmark_summary_lines(metrics: BenchmarkMetrics,
+                                  benchmark_duration: float) -> List[str]:
+    lines = []
+    lines.append("{s:{c}^{n}}".format(s=' Serving Benchmark Result ', n=50, c='='))
+    lines.append("{:<40} {:<10}".format("Successful requests:", metrics.completed))
+    lines.append("{:<40} {:<10.2f}".format("Benchmark duration (s):", benchmark_duration))
+    lines.append("{:<40} {:<10}".format("Total input tokens:", metrics.total_input))
+    lines.append("{:<40} {:<10}".format("Total generated tokens:", metrics.total_output))
+    lines.append("{:<40} {:<10.2f}".format("Request throughput (req/s):", metrics.request_throughput))
+    lines.append("{:<40} {:<10.2f}".format("Input token throughput (tok/s):", metrics.input_throughput))
+    lines.append("{:<40} {:<10.2f}".format("Output token throughput (tok/s):", metrics.output_throughput))
+    lines.append("{s:{c}^{n}}".format(s='Time to First Token', n=50, c='-'))
+    lines.append("{:<40} {:<10.2f}".format("Mean TTFT (ms):", metrics.mean_ttft_ms))
+    lines.append("{:<40} {:<10.2f}".format("Median TTFT (ms):", metrics.median_ttft_ms))
+    lines.append("{:<40} {:<10.2f}".format("P99 TTFT (ms):", metrics.p99_ttft_ms))
+    lines.append("{s:{c}^{n}}".format(s='Time per Output Token (excl. 1st token)', n=50, c='-'))
+    lines.append("{:<40} {:<10.2f}".format("Mean TPOT (ms):", metrics.mean_tpot_ms))
+    lines.append("{:<40} {:<10.2f}".format("Median TPOT (ms):", metrics.median_tpot_ms))
+    lines.append("{:<40} {:<10.2f}".format("P99 TPOT (ms):", metrics.p99_tpot_ms))
+    lines.append("{s:{c}^{n}}".format(s='Inter-token Latency', n=50, c='-'))
+    lines.append("{:<40} {:<10.2f}".format("Mean ITL (ms):", metrics.mean_itl_ms))
+    lines.append("{:<40} {:<10.2f}".format("Median ITL (ms):", metrics.median_itl_ms))
+    lines.append("{:<40} {:<10.2f}".format("P99 ITL (ms):", metrics.p99_itl_ms))
+    lines.append("=" * 50)
+    return lines
+
+
+def write_metrics_summary(metrics: BenchmarkMetrics,
+                          benchmark_duration: float,
+                          csv_path: Path,
+                          context: Optional[Dict[str, object]] = None) -> None:
+    context = context or {}
+    csv_path = csv_path.expanduser()
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = ["timestamp"]
+    fieldnames.extend(context.keys())
+    fieldnames.extend([
+        "duration_s",
+        "completed",
+        "total_input_tokens",
+        "total_output_tokens",
+        "request_throughput",
+        "input_throughput",
+        "output_throughput",
+        "mean_ttft_ms",
+        "median_ttft_ms",
+        "p99_ttft_ms",
+        "mean_tpot_ms",
+        "median_tpot_ms",
+        "p99_tpot_ms",
+        "mean_itl_ms",
+        "median_itl_ms",
+        "p99_itl_ms",
+    ])
+    row = {
+        "timestamp": datetime.now().isoformat(),
+        "duration_s": benchmark_duration,
+        "completed": metrics.completed,
+        "total_input_tokens": metrics.total_input,
+        "total_output_tokens": metrics.total_output,
+        "request_throughput": metrics.request_throughput,
+        "input_throughput": metrics.input_throughput,
+        "output_throughput": metrics.output_throughput,
+        "mean_ttft_ms": metrics.mean_ttft_ms,
+        "median_ttft_ms": metrics.median_ttft_ms,
+        "p99_ttft_ms": metrics.p99_ttft_ms,
+        "mean_tpot_ms": metrics.mean_tpot_ms,
+        "median_tpot_ms": metrics.median_tpot_ms,
+        "p99_tpot_ms": metrics.p99_tpot_ms,
+        "mean_itl_ms": metrics.mean_itl_ms,
+        "median_itl_ms": metrics.median_itl_ms,
+        "p99_itl_ms": metrics.p99_itl_ms,
+    }
+    row.update(context)
+    file_exists = csv_path.exists()
+    with csv_path.open('a', newline='') as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        if not file_exists:
+            writer.writeheader()
+        writer.writerow({field: row.get(field) for field in fieldnames})
+
+
+def append_summary_to_log(summary_lines: Sequence[str], log_path: Path) -> None:
+    if not summary_lines:
+        return
+    log_path = log_path.expanduser()
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().isoformat()
+    with log_path.open('a', encoding='utf-8') as logfile:
+        logfile.write(f"\n[{timestamp}] Benchmark Summary\n")
+        for line in summary_lines:
+            logfile.write(line.rstrip() + "\n")
+
+
 
 async def get_request(
     input_requests: List[Tuple[str, int, int]],
@@ -406,39 +500,13 @@ async def benchmark(
         tokenizer=tokenizer,
     )
 
-    print("{s:{c}^{n}}".format(s=' Serving Benchmark Result ', n=50, c='='))
-    print("{:<40} {:<10}".format("Successful requests:", metrics.completed))
-    print("{:<40} {:<10.2f}".format("Benchmark duration (s):",
-                                    benchmark_duration))
-    print("{:<40} {:<10}".format("Total input tokens:", metrics.total_input))
-    print("{:<40} {:<10}".format("Total generated tokens:",
-                                 metrics.total_output))
-    print("{:<40} {:<10.2f}".format("Request throughput (req/s):",
-                                    metrics.request_throughput))
-    print("{:<40} {:<10.2f}".format("Input token throughput (tok/s):",
-                                    metrics.input_throughput))
-    print("{:<40} {:<10.2f}".format("Output token throughput (tok/s):",
-                                    metrics.output_throughput))
-    print("{s:{c}^{n}}".format(s='Time to First Token', n=50, c='-'))
-    print("{:<40} {:<10.2f}".format("Mean TTFT (ms):", metrics.mean_ttft_ms))
-    print("{:<40} {:<10.2f}".format("Median TTFT (ms):",
-                                    metrics.median_ttft_ms))
-    print("{:<40} {:<10.2f}".format("P99 TTFT (ms):", metrics.p99_ttft_ms))
-    print("{s:{c}^{n}}".format(s='Time per Output Token (excl. 1st token)',
-                               n=50,
-                               c='-'))
-    print("{:<40} {:<10.2f}".format("Mean TPOT (ms):", metrics.mean_tpot_ms))
-    print("{:<40} {:<10.2f}".format("Median TPOT (ms):",
-                                    metrics.median_tpot_ms))
-    print("{:<40} {:<10.2f}".format("P99 TPOT (ms):", metrics.p99_tpot_ms))
-    print("{s:{c}^{n}}".format(s='Inter-token Latency', n=50, c='-'))
-    print("{:<40} {:<10.2f}".format("Mean ITL (ms):", metrics.mean_itl_ms))
-    print("{:<40} {:<10.2f}".format("Median ITL (ms):", metrics.median_itl_ms))
-    print("{:<40} {:<10.2f}".format("P99 ITL (ms):", metrics.p99_itl_ms))
-    print("=" * 50)
+    summary_lines = build_benchmark_summary_lines(metrics, benchmark_duration)
+    for line in summary_lines:
+        print(line)
 
     result = {
         "duration": benchmark_duration,
+        "metrics": asdict(metrics),
         "completed": metrics.completed,
         "total_input_tokens": metrics.total_input,
         "total_output_tokens": metrics.total_output,
@@ -460,6 +528,7 @@ async def benchmark(
         "itls": [output.itl for output in outputs],
         "generated_texts": [output.generated_text for output in outputs],
         "errors": [output.error for output in outputs],
+        "summary_lines": summary_lines,
         "request_stats": request_records,
     }
     return result
@@ -593,6 +662,29 @@ def main(args: argparse.Namespace):
                        / "ttft_tpot_data.csv")
     write_ttft_tpot_csv(benchmark_result.get("request_stats", []),
                         csv_output_path)
+
+    summary_lines = benchmark_result.get("summary_lines", [])
+    server_log_path = (Path(args.server_log_path).expanduser()
+                       if args.server_log_path else Path(__file__).resolve().parent
+                       / "vllm_server.log")
+    append_summary_to_log(summary_lines, server_log_path)
+
+    metrics_info = benchmark_result.get("metrics")
+    if metrics_info:
+        metrics_output_path = (Path(args.metrics_output).expanduser()
+                               if args.metrics_output else Path(__file__).resolve().parent
+                               / "benchmark_metrics_summary.csv")
+        request_rate_value = "inf" if np.isinf(args.request_rate) else args.request_rate
+        context = {
+            "backend": backend,
+            "model_id": model_id,
+            "request_rate": request_rate_value,
+            "num_prompts": args.num_prompts,
+        }
+        write_metrics_summary(BenchmarkMetrics(**metrics_info),
+                              benchmark_result["duration"],
+                              metrics_output_path,
+                              context)
 
     # Save config and results to json
     if args.save_result:
@@ -776,6 +868,24 @@ if __name__ == "__main__":
         help=(
             "Optional path to store per-request TTFT/TPOT metrics as CSV. "
             "Defaults to assignment_2/ttft_tpot_data.csv."
+        ),
+    )
+    parser.add_argument(
+        "--metrics-output",
+        type=str,
+        default=None,
+        help=(
+            "Optional path to store aggregate benchmark metrics as CSV. "
+            "Defaults to assignment_2/benchmark_metrics_summary.csv."
+        ),
+    )
+    parser.add_argument(
+        "--server-log-path",
+        type=str,
+        default=None,
+        help=(
+            "Optional path to append the formatted benchmark summary. "
+            "Defaults to assignment_2/vllm_server.log."
         ),
     )
     parser.add_argument("--long-prompts", type=int, default=0)
