@@ -94,7 +94,7 @@ Within the homework folder, we have provided `server.sh`, a script that starts a
 (d) Plot the GPU KV cache usage over time using the server log. 
 
 
-Plot the TTFTs, you should see a graph like below (Figure 3.1), though you will have 50 prompts along x-axis.
+Plot the TTFTs, you should see a graph like below (Figure 3.1) (you will have 50 prompts along x-axis, and the plot might not be strictly increasing).
 ![Figure 1: Sorted TTFTs of requests in the burst](./ttft_vllm.png)
 
 **Task 2: Answer the following MCQs**
