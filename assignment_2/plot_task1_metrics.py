@@ -54,18 +54,18 @@ def load_prompt_metrics(csv_path: Path) -> List[PromptMetrics]:
 def plot_ttft_tpot(metrics: Sequence[PromptMetrics], output_path: Path) -> None:
     """Plot TTFT and TPOT per prompt index and save to output_path."""
     prompt_indices = [m.prompt_index for m in metrics]
-    ttft_values = [m.ttft_ms for m in metrics]
-    tpot_values = [m.tpot_ms for m in metrics]
+    ttft_values = [m.ttft_ms / 1000 for m in metrics]
+    tpot_values = [m.tpot_ms / 1000 for m in metrics]
 
     fig, axes = plt.subplots(2, 1, sharex=True, figsize=(10, 6))
     axes[0].plot(prompt_indices, ttft_values, marker="o", linewidth=1.5)
-    axes[0].set_ylabel("TTFT (ms)")
+    axes[0].set_ylabel("TTFT (seconds)")
     axes[0].set_title("Time to First Token per prompt")
     axes[0].grid(True, linestyle="--", alpha=0.4)
 
     axes[1].plot(prompt_indices, tpot_values, marker="o", color="tab:orange", linewidth=1.5)
     axes[1].set_xlabel("Prompt index (issue order)")
-    axes[1].set_ylabel("TPOT (ms)")
+    axes[1].set_ylabel("TPOT (seconds)")
     axes[1].set_title("Time per Output Token per prompt")
     axes[1].grid(True, linestyle="--", alpha=0.4)
 
