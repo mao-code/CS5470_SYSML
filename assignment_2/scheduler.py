@@ -1259,8 +1259,7 @@ class Scheduler:
         """Schedule queued requests with a preemptive CFS-inspired policy."""
 
         """
-        Prerequisites:
-
+        ### Prerequisites:
         1. "SchedulingBudget" 
             is a per-iteration accounting object that limits how many things can be scheduled on GPU at once:
             a. token_budget → max number of tokens in a batch (max_num_batched_tokens).
@@ -1277,33 +1276,45 @@ class Scheduler:
             2. Running queue → active requests on GPU, doing decoding (token-by-token generation) or chunked prefills.
             3. Swapped queue → requests evicted from GPU memory (KV cache moved to CPU or marked for recompute) waiting to be resumed.
 
-        3. Overall Flow (Request → GPU)
-            1. Client submits request
-                → becomes a SequenceGroup in waiting queue.
+        ### Overall Flow
+        1. Start of iteration → Build budget
+            * Initialize SchedulingBudget(token_budget, max_num_seqs).
+            Seed it with what's already running (active decode seqs).
 
-            2. Scheduler iteration (schedule())
-                a. Build a SchedulingBudget.
-                b. Try to admit as many prefills (waiting prompts) as fit.
-                c. If budget left, admit/continue decodes from running queue.
-                d. If memory freed, optionally bring back swapped requests.
-                e. If over capacity, preempt low-priority requests (move to swapped or waiting).
+        2. Preemption pass (running → waiting/swapped)
+            * If current running load blocks admitting prompt batches, preempt running decoders only:
+                * Preempt (free compute slots; KV stays on GPU) until seq slots are available.
+                * If still memory-tight (KV pressure), swap out some running seqs (KV off-GPU) to free memory.
+            * Preempted groups go to waiting (front); swapped go to swapped (priority-sorted).
 
-            3. SchedulerOutputs created
-                → contains which groups to run, which blocks to swap in/out, ignored ones, etc.
+        3. Admit prompt batches (prefill-first)
+            * From waiting, pick prompt groups that fit the remaining budget (tokens + seqs), respecting LoRA compatibility.
+            * No prefill chunking here; only prompts that fit are batched.
+            * Prepare any KV/prefix cache blocks and blocks_to_copy needed.
 
-            4. Engine executes on GPU
-                → forward pass runs for scheduled batch (prefill chunk or 1 decode token).
-                → KV cache updated.
+        4. Lock the plan for this iteration
+            * If any prefills are admitted:
+                * Do not schedule decodes or swap-ins this round (keep the batch homogeneous).
+                * Append these prefill groups to running and set prev_prompt = True.
 
-            5. Next iteration
-                → scheduler repeats: checks queues, applies budget, builds next batch.
+        5. Execute on GPU
+            * Engine runs a prefill forward pass for the batched prompts.
+            * KV cache is populated/extended for these sequences.
 
-            Overall,
-            1. Build budget (tokens + sequences limit).
-            2. Prefills first: gather prompt tokens (and KV cache blocks if prefix cache enabled) from the waiting queue, batch them, and will be sent to GPU for prefill.
-            3. If budget left: admit decodes from the running queue, each decoding 1 new token per sequence.
-            4. If space (budget) available: bring back swapped requests from CPU → GPU (resume decoding).
-            5. If over capacity (budget): preempt requests (move from running → waiting/swapped).
+        6. Book-keeping
+            * Maintain swapped (sorted by priority).
+            * Track blocks_to_swap_out/in, blocks_to_copy, and any ignored groups (rare for prompt rounds).
+
+        7. Next iteration
+            * Rebuild budget (now with newly running groups).
+            * If no prefills remain or none fit, schedule decodes; if stable and capacity remains, swap-in paused groups.
+            * Preempt again if needed to admit additional prompt batches in future rounds.
+
+        ### Key distinctions in this flow
+        1. Preemption targets only running decoders (never active prefills).
+        2. Prefill > decode > swap-in priority per iteration.
+        3. Preempted frees compute slots (fast resume; KV stays). Swapped-out frees memory (slower resume; needs swap-in).
+        4. Homogeneous batches (all-prefill) reduce kernel divergence and keep latency predictable.
         """
 
         budget = SchedulingBudget(
@@ -1315,6 +1326,7 @@ class Scheduler:
             budget.add_num_seqs(seq_group.request_id, seq_group.get_max_num_running_seqs())
 
         # Preemption only happens in the running queue
+        # Preemption (Running → Waiting/Swapped) (find victim prompts)
         force_preemptions = self._schedule_priority_preemption(budget)
 
         curr_loras = (set(
@@ -1327,19 +1339,28 @@ class Scheduler:
 
         # ----------------------------------------------------------------------
         """
-        1. If there are any swapped requests: skip new prefills this iteration.
-        2. If no prefills were scheduled, schedule running decodes (1 token per seq).
-        3. Only if step 2 didn't cause any preemption, try to swap-in from the swapped queue.
+        Prefers prefill admission first, then decode, then swap-in.
         """
+
+        # Waiting → Running (Prefill-first)
+        # Always try to admit prefills before more decodes.
         prefills = self._schedule_prefills(budget,
                                            curr_loras,
                                            enable_chunking=False)
 
         if len(prefills.seq_groups) == 0:
+            # Running (Decode) 
+            # Decoding is one token per active sequence per iteration, bounded by the budget.
             running_scheduled = self._schedule_running(budget,
                                                        curr_loras,
                                                        enable_chunking=False)
-
+            
+            # Swap-in (Swapped → Running) only when:
+            # No prefills admitted this round, and
+            # No forced preemptions, and
+            # We didn't swap-out anyone in _schedule_running.
+            # 1. Preempted: The sequence (request) is paused and removed from the running queue, but its KV cache stays on GPU. (Moved from running → waiting.)
+            # 2. Swapped out: The sequence is evicted from GPU — its KV cache is moved to CPU or released.
             if (force_preemptions == 0 and
                     len(running_scheduled.preempted) +
                     len(running_scheduled.swapped_out) == 0):
