@@ -895,3 +895,10 @@ if __name__ == "__main__":
                         help="Long prompt length for testing")
     args = parser.parse_args()
     main(args)
+
+
+"""
+command for CFS scheduler
+
+python3 benchmark.py --backend openai --model meta-llama/CodeLlama-34b-hf --request-rate 3 --num-prompts 50 --dataset-name dummy --long-prompts 0 --long-prompt-len 32000 --csv-output ttft_tpot_cfs.csv
+"""
