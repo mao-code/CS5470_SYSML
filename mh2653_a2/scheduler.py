@@ -1035,14 +1035,13 @@ class Scheduler:
             # Put the sequence back into the waiting queue
             waiting_queue.appendleft(seq_group)
 
-        else: 
-            # if there is no new tasks (waiting queue is empty), give swapped out sequences from previous GPU iterations a chance to go back into GPU to run again.
+        else:
             if running_queue and self.swapped:
-                vseq_group = running_queue.pop() # victim sequence group
+                vseq_group = running_queue.pop()
                 prev_mode = self.user_specified_preemption_mode
-                self.user_specified_preemption_mode = "swap" # force to be swap mode for now
+                self.user_specified_preemption_mode = "swap"
                 self._preempt(vseq_group, blocks_to_swap_out)
-                self.user_specified_preemption_mode = prev_mode # set back the previous mode
+                self.user_specified_preemption_mode = prev_mode
                 swapped_victims.append(vseq_group)
                 force_preemption_count += 1
 
@@ -1273,9 +1272,9 @@ class Scheduler:
 
         2. Queues
         The scheduler manages sequence groups (prompts + their generations) through state queues:
-            1. Waiting queue → new requests or preempted requests (if preempted mode is recompute) not yet admitted to GPU (haven't prefilled). (Prefill stage: the initial prompt tokens to encode).
+            1. Waiting queue → new requests or preempted requests not yet admitted to GPU. (Prefill stage: the initial prompt tokens to encode).
             2. Running queue → active requests on GPU, doing decoding (token-by-token generation) or chunked prefills.
-            3. Swapped queue → requests evicted from GPU memory (KV cache moved to CPU or marked for recompute) waiting to be resumed. (if preempted mode is swapped)
+            3. Swapped queue → requests evicted from GPU memory (KV cache moved to CPU or marked for recompute) waiting to be resumed.
 
         ### Overall Flow
         1. Start of iteration → Build budget
@@ -1286,7 +1285,7 @@ class Scheduler:
             * If current running load blocks admitting prompt batches, preempt running decoders only:
                 * Preempt (free compute slots; KV stays on GPU) until seq slots are available.
                 * If still memory-tight (KV pressure), swap out some running seqs (KV off-GPU) to free memory.
-            * Preempted groups go to waiting (if preempt mode is recompute) or swapped queue (if preempt mode is swap).
+            * Preempted groups go to waiting (front); swapped go to swapped (priority-sorted).
 
         3. Admit prompt batches (prefill-first)
             * From waiting, pick prompt groups that fit the remaining budget (tokens + seqs), respecting LoRA compatibility.
@@ -1328,8 +1327,6 @@ class Scheduler:
 
         # Preemption only happens in the running queue
         # Preemption (Running → Waiting/Swapped) (find victim prompts)
-        # Here, in this function, we force it to be swap mode so the preempted sequence will go to swapped queue and KV cache offload to CPU.
-        # If you use recompute for preempt mode, the sequence will go to waiting queue and need to be recomputed for its KV cache (prefill again).
         force_preemptions = self._schedule_priority_preemption(budget)
 
         curr_loras = (set(
