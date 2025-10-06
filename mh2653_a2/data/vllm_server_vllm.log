@@ -1,0 +1,48 @@
+2025-10-03 13:54:09,698 - vllm.engine.metrics - INFO - Avg prompt throughput: 177.9 tokens/s, Avg generation throughput: 0.1 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 7.8%, CPU KV cache usage: 0.0%.
+2025-10-03 13:54:14,708 - vllm.engine.metrics - INFO - Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 32.1 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 8.8%, CPU KV cache usage: 0.0%.
+2025-10-03 13:54:19,819 - vllm.engine.metrics - INFO - Avg prompt throughput: 2822.9 tokens/s, Avg generation throughput: 19.6 tokens/s, Running: 7 reqs, Swapped: 0 reqs, Pending: 1 reqs, GPU KV cache usage: 88.7%, CPU KV cache usage: 0.0%.
+2025-10-03 13:54:24,844 - vllm.engine.metrics - INFO - Avg prompt throughput: 419.3 tokens/s, Avg generation throughput: 211.3 tokens/s, Running: 8 reqs, Swapped: 0 reqs, Pending: 11 reqs, GPU KV cache usage: 99.5%, CPU KV cache usage: 0.0%.
+2025-10-03 13:54:29,865 - vllm.engine.metrics - INFO - Avg prompt throughput: 928.9 tokens/s, Avg generation throughput: 191.0 tokens/s, Running: 9 reqs, Swapped: 0 reqs, Pending: 18 reqs, GPU KV cache usage: 92.2%, CPU KV cache usage: 0.0%.
+2025-10-03 13:54:34,884 - vllm.engine.metrics - INFO - Avg prompt throughput: 1408.9 tokens/s, Avg generation throughput: 207.0 tokens/s, Running: 10 reqs, Swapped: 0 reqs, Pending: 31 reqs, GPU KV cache usage: 92.4%, CPU KV cache usage: 0.0%.
+2025-10-03 13:54:39,900 - vllm.engine.metrics - INFO - Avg prompt throughput: 1515.8 tokens/s, Avg generation throughput: 232.5 tokens/s, Running: 11 reqs, Swapped: 0 reqs, Pending: 27 reqs, GPU KV cache usage: 98.9%, CPU KV cache usage: 0.0%.
+2025-10-03 13:54:45,146 - vllm.engine.metrics - INFO - Avg prompt throughput: 698.8 tokens/s, Avg generation throughput: 269.3 tokens/s, Running: 12 reqs, Swapped: 0 reqs, Pending: 21 reqs, GPU KV cache usage: 97.2%, CPU KV cache usage: 0.0%.
+2025-10-03 13:54:50,175 - vllm.engine.metrics - INFO - Avg prompt throughput: 181.4 tokens/s, Avg generation throughput: 306.7 tokens/s, Running: 11 reqs, Swapped: 0 reqs, Pending: 20 reqs, GPU KV cache usage: 97.2%, CPU KV cache usage: 0.0%.
+2025-10-03 13:54:55,269 - vllm.engine.metrics - INFO - Avg prompt throughput: 791.3 tokens/s, Avg generation throughput: 244.0 tokens/s, Running: 10 reqs, Swapped: 0 reqs, Pending: 18 reqs, GPU KV cache usage: 91.6%, CPU KV cache usage: 0.0%.
+2025-10-03 13:55:00,298 - vllm.engine.metrics - INFO - Avg prompt throughput: 1528.8 tokens/s, Avg generation throughput: 215.2 tokens/s, Running: 9 reqs, Swapped: 0 reqs, Pending: 12 reqs, GPU KV cache usage: 93.5%, CPU KV cache usage: 0.0%.
+2025-10-03 13:55:05,299 - vllm.engine.metrics - INFO - Avg prompt throughput: 2132.4 tokens/s, Avg generation throughput: 176.2 tokens/s, Running: 10 reqs, Swapped: 0 reqs, Pending: 5 reqs, GPU KV cache usage: 99.2%, CPU KV cache usage: 0.0%.
+2025-10-03 13:55:10,311 - vllm.engine.metrics - INFO - Avg prompt throughput: 425.6 tokens/s, Avg generation throughput: 237.6 tokens/s, Running: 7 reqs, Swapped: 0 reqs, Pending: 3 reqs, GPU KV cache usage: 84.0%, CPU KV cache usage: 0.0%.
+2025-10-03 13:55:15,336 - vllm.engine.metrics - INFO - Avg prompt throughput: 882.0 tokens/s, Avg generation throughput: 175.9 tokens/s, Running: 7 reqs, Swapped: 0 reqs, Pending: 1 reqs, GPU KV cache usage: 93.7%, CPU KV cache usage: 0.0%.
+2025-10-03 13:55:20,343 - vllm.engine.metrics - INFO - Avg prompt throughput: 279.8 tokens/s, Avg generation throughput: 168.8 tokens/s, Running: 5 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 69.0%, CPU KV cache usage: 0.0%.
+2025-10-03 13:55:25,351 - vllm.engine.metrics - INFO - Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 123.4 tokens/s, Running: 3 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 45.9%, CPU KV cache usage: 0.0%.
+2025-10-03 13:55:30,378 - vllm.engine.metrics - INFO - Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 92.5 tokens/s, Running: 3 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 48.8%, CPU KV cache usage: 0.0%.
+2025-10-03 13:55:35,391 - vllm.engine.metrics - INFO - Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 72.4 tokens/s, Running: 2 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 29.9%, CPU KV cache usage: 0.0%.
+2025-10-03 13:55:40,406 - vllm.engine.metrics - INFO - Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 60.4 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 14.4%, CPU KV cache usage: 0.0%.
+2025-10-03 13:55:45,434 - vllm.engine.metrics - INFO - Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 32.0 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 15.3%, CPU KV cache usage: 0.0%.
+
+[2025-10-03T13:55:46.005614] Benchmark Summary
+============ Serving Benchmark Result ============
+Successful requests:                     50
+Benchmark duration (s):                  88.80
+Total input tokens:                      67785
+Total generated tokens:                  17166
+Request throughput (req/s):              0.56
+Input token throughput (tok/s):          763.35
+Output token throughput (tok/s):         193.31
+---------------Time to First Token----------------
+Mean TTFT (ms):                          17281.27
+Median TTFT (ms):                        15859.66
+P99 TTFT (ms):                           41401.45
+-----Time per Output Token (excl. 1st token)------
+Mean TPOT (ms):                          39.73
+Median TPOT (ms):                        40.69
+P99 TPOT (ms):                           64.14
+---------------Inter-token Latency----------------
+Mean ITL (ms):                           101.52
+Median ITL (ms):                         34.33
+P99 ITL (ms):                            427.89
+==================================================
+2025-10-03 13:55:55,977 - vllm.engine.metrics - INFO - Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 1.6 tokens/s, Running: 0 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 0.0%, CPU KV cache usage: 0.0%.
+2025-10-03 13:56:05,981 - vllm.engine.metrics - INFO - Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 0.0 tokens/s, Running: 0 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 0.0%, CPU KV cache usage: 0.0%.
+2025-10-03 13:56:59,816 - vllm.executor.multiproc_worker_utils - INFO - Worker exiting
+2025-10-03 13:56:59,824 - vllm.executor.multiproc_worker_utils - INFO - Terminating local vLLM worker processes
+2025-10-03 13:56:59,900 - vllm.entrypoints.launcher - INFO - Shutting down FastAPI HTTP server.
