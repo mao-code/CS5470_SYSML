@@ -70,23 +70,25 @@ class CustomStridedAttention(nn.Module):
 
     def forward(self, x):
         # x: (batch_size, seq_len, embed_dim)
-        batch_size, seq_len, _ = x.shape
+        batch_size, seq_len, _ = x.shape  # Record batch size and sequence length for downstream reshaping
 
         # Project and reshape Q, K, V
-        qkv = self.qkv_proj(x)
-        qkv = qkv.reshape(batch_size, seq_len, 3, self.num_heads, self.head_dim)
+        qkv = self.qkv_proj(x)  # Apply shared projection to produce concatenated Q, K, V representations
+        qkv = qkv.reshape(batch_size, seq_len, 3, self.num_heads, self.head_dim)  # Split the projection into separate matrices per head
         qkv = qkv.permute(2, 0, 3, 1, 4) # (3, batch_size, num_heads, seq_len, head_dim)
-        q, k, v = qkv[0], qkv[1], qkv[2]
+        q, k, v = qkv[0], qkv[1], qkv[2]  # Unpack the query, key, and value tensors from the stacked dimension
 
-        # TODO: Replace the call to the naive implementation below with a call
-        # to your custom CUDA kernel `strided_attention_forward`.
- 
-        # Using the naive implementation as a placeholder.
-        output = naive_strided_attention(q, k, v, self.stride)
+        if q.is_cuda:  # Check whether the computation should run on GPU
+            q_cuda = q.contiguous()  # Ensure query tensor is laid out contiguously for the CUDA kernel
+            k_cuda = k.contiguous()  # Ensure key tensor is contiguous for coalesced memory access
+            v_cuda = v.contiguous()  # Ensure value tensor is contiguous for the CUDA kernel
+            output = strided_attention_forward(q_cuda, k_cuda, v_cuda, self.stride)  # Invoke the optimized CUDA kernel for strided attention
+        else:  # Fall back to the reference implementation when running on the CPU
+            output = naive_strided_attention(q, k, v, self.stride)  # Use the pure PyTorch baseline if CUDA is unavailable
 
         # Reshape and project the output back to the original shape
-        output = output.permute(0, 2, 1, 3).contiguous()
-        output = output.reshape(batch_size, seq_len, self.embed_dim)
-        output = self.out_proj(output)
+        output = output.permute(0, 2, 1, 3).contiguous()  # Move head dimension back to its original position
+        output = output.reshape(batch_size, seq_len, self.embed_dim)  # Collapse heads into the model embedding dimension
+        output = self.out_proj(output)  # Apply the output projection to align with the model embedding space
 
         return output
