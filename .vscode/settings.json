@@ -1,5 +1,14 @@
 {
     "files.associations": {
-        "limits": "cpp"
+        "limits": "cpp",
+        "__bit_reference": "cpp",
+        "__node_handle": "cpp",
+        "bitset": "cpp",
+        "deque": "cpp",
+        "locale": "cpp",
+        "optional": "cpp",
+        "ratio": "cpp",
+        "vector": "cpp",
+        "__locale": "cpp"
     }
 }

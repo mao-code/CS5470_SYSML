@@ -1,5 +1,6 @@
 #include <torch/extension.h>
 #include <cuda_fp16.h>
+#include <cuda_runtime.h>
 #include <stdexcept>
 #include <vector>
 #include <type_traits> // Enable type selection utilities inside device code
@@ -34,6 +35,30 @@ __device__ inline double reciprocal_sqrt_int<double>(const int value) { // Speci
     return 1.0 / sqrt(static_cast<double>(value)); // Compute reciprocal via double-precision sqrt to preserve accuracy
 }
 
+// Inside the GPU hardware, threads are executed in groups of 32 threads, called warps.
+// warpSize is a constant provided by CUDA (usually 32).
+template <typename T>
+// Warp-level sum reduction helper for arbitrary accumulator types
+__device__ inline T warp_reduce_sum(T value) { 
+    // __activemask returns a bitmask of which threads (lanes) in the warp are active.
+    // If only threads 0-15 are active → mask looks like 0x0000FFFF (each bit represents a lane/thread).
+    unsigned mask = __activemask(); 
+    for (int offset = warpSize >> 1; offset > 0; offset >>= 1) {
+
+        // Moves (shuffles) a register value from a higher-numbered thread to a lower-numbered thread in the same warp.
+
+        // For example, offset=1 means:
+        // * Thread 0 gets thread 1's value,
+        // * Thread 1 gets thread 2's value,
+        // etc.
+
+        // Used for reductions (sum, max, etc.) across warp threads without shared memory.
+        // Works only inside a warp → super fast.
+        value += __shfl_down_sync(mask, value, offset);
+    }
+    return value;
+}
+
 template <typename T>
 __global__ void strided_attention_forward_kernel(
     const T* __restrict__ q_ptr,
@@ -46,21 +71,21 @@ __global__ void strided_attention_forward_kernel(
     const int head_dim,
     const int stride) {
     
-    """
-    Note:
-    1. Each SM can execute many blocks concurrently
-    2. Grid → Blocks → Threads
-        a. You launch a grid of blocks.
-        b. Each block runs on one SM (One SM runs one or more blocks).
-        c. Each block has many threads (typically 128-1024).
-        d. Threads inside a block can cooperate via shared memory and synchronization
-    3. A block = one (batch, head, query) tile in my kernel.
-        Inside that block:
-        a. Many threads share the same (batch, head, query) but work on different parts of the attention computation.
-        b. For example:
-            i. Each thread might process a subset of the key positions.
-            ii. Or each thread might process a subset of the head_dim (feature dimension).
-    """
+    
+    // Note:
+    // 1. Each SM can execute many blocks concurrently
+    // 2. Grid → Blocks → Threads
+    //     a. You launch a grid of blocks.
+    //     b. Each block runs on one SM (One SM runs one or more blocks).
+    //     c. Each block has many threads (typically 128-1024).
+    //     d. Threads inside a block can cooperate via shared memory and synchronization
+    // 3. A block = one (batch, head, query) tile in my kernel.
+    //     Inside that block:
+    //     a. Many threads share the same (batch, head, query) but work on different parts of the attention computation.
+    //     b. For example:
+    //         i. Each thread might process a subset of the key positions.
+    //         ii. Or each thread might process a subset of the head_dim (feature dimension).
+    
     
     // Record the index of the current thread inside the block
     const int thread_idx = threadIdx.x; 
@@ -87,6 +112,7 @@ __global__ void strided_attention_forward_kernel(
     
     // Allocate Shared Memory
     // Shared buffer that stores the active query vector for reuse
+    // (on-chip memory visible to all threads in a block)
     __shared__ acc_t shared_query[max_block]; 
     // Shared buffer reused for reductions and temporary values
     __shared__ acc_t shared_buffer[max_block];
@@ -123,13 +149,13 @@ __global__ void strided_attention_forward_kernel(
     // Here we have computed the logical coordinate of q, k, v pointers and can use them to access the memory
     // ======================================================
     // Check whether this thread participates in loading a query component
-    """
-    * Each CUDA block has, say, blockDim.x = 256 threads, but our head_dim (the embedding size per attention head) might be smaller (e.g., 64, 128, or 192).
-    * We only need head_dim threads to load the actual query vector.
-    * So this condition ensures:
-        1. Only the first head_dim threads read real data from global memory (query_ptr).
-        2. The remaining threads (if any) safely write 0 — so that later reductions don't read garbage (uninitialized) shared memory values.
-    """
+    
+    // * Each CUDA block has, say, blockDim.x = 256 threads, but our head_dim (the embedding size per attention head) might be smaller (e.g., 64, 128, or 192).
+    // * We only need head_dim threads to load the actual query vector.
+    // * So this condition ensures:
+    //     1. Only the first head_dim threads read real data from global memory (query_ptr).
+    //     2. The remaining threads (if any) safely write 0 — so that later reductions don't read garbage (uninitialized) shared memory values.
+    
     if (thread_idx < head_dim) { 
         // Write the assigned query component into shared memory
         shared_query[thread_idx] = static_cast<acc_t>(query_ptr[thread_idx]); 
@@ -139,65 +165,32 @@ __global__ void strided_attention_forward_kernel(
     }
     __syncthreads(); // Ensure the entire query vector is available to all threads (join threads)
 
-    // Iterate over all stride-aligned key positions
-    for (int key_slot = 0; key_slot < max_keys; ++key_slot) { 
-        // Convert slot index into the actual key position
-        const int key_idx = key_slot * stride; 
+    const int warp_size = warpSize; // Cache warp size for distributing work
+    const int warp_id = thread_idx / warp_size; // Warp identifier inside the block
+    const int lane_id = thread_idx % warp_size; // Lane identifier within the warp
+    const int warps_per_block = (blockDim.x + warp_size - 1) / warp_size; // Total warps participating in the block
 
-        if (key_idx >= seq_len) { // Skip slots that point beyond the sequence length boundary
-            if (thread_idx == 0) { // Let a single thread register a score for the invalid slot
-                // Assign negative infinity so masked positions vanish after softmax
-                shared_scores[key_slot] = -std::numeric_limits<acc_t>::infinity(); 
+    // Iterate over stride-aligned key positions and assign one warp per key to maximize utilization
+    for (int key_base = 0; key_base < max_keys; key_base += warps_per_block) { 
+        const int key_slot = key_base + warp_id; // Key slot handled by the current warp
+        const bool warp_active = key_slot < max_keys; // Only some warps may have valid work in the final tile
+        const int key_idx = key_slot * stride; // Translate slot index into sequence position
+        const bool valid_key = warp_active && (key_idx < seq_len); // Mask keys that fall past sequence length
+
+        acc_t partial_dot = acc_t(0); // Each lane accumulates its slice of the dot product
+        if (valid_key) {
+            const T* key_ptr = key_head_ptr + static_cast<long>(key_idx) * head_dim; // Pointer to the selected key vector
+            for (int dim = lane_id; dim < head_dim; dim += warp_size) { 
+                partial_dot += shared_query[dim] * static_cast<acc_t>(key_ptr[dim]); // Accumulate per-lane contributions
             }
-            __syncthreads(); // Synchronize before moving to the next slot
-            continue; // Advance to the next available key slot
         }
 
-        // Compute the offset for the selected key vector
-        const long key_offset = static_cast<long>(key_idx) * head_dim;
-        // Derive pointer to the key vector in global memory
-        const T* key_ptr = key_head_ptr + key_offset; 
-        
-        // Dot Product
-        // Initialize the partial dot product computed by this thread
-        // p_t = sum_{d = t, t+blockDim.x, ... < head_dim} Q[b,h,q,d] * K[b,h,key_idx,d]
-        acc_t partial_dot = acc_t(0); 
-        // Traverse dimensions assigned to this thread with striding
-        for (int dim = thread_idx; dim < head_dim; dim += blockDim.x) { 
-            // Accumulate contribution from matching query and key components
-            // Do dot-product for query and key vector for each dimension value
-            partial_dot += shared_query[dim] * static_cast<acc_t>(key_ptr[dim]); // Q[b,h,q,d] * K[b,h,key_idx,d]
-
-            """
-            No single thread has all D dimensions. (in one q, k dot-product)
-            * Thread 0 has contributions from some dims (0, 0+T, 0+2T, …)
-            * Thread 1 has contributions from dims (1, 1+T, 1+2T, …)
-            """
-        } 
-        // Store the thread-local dot contribution in shared memory
-        shared_buffer[thread_idx] = partial_dot; 
-        __syncthreads(); // Synchronize before performing reduction
-
-        // Perform "tree reduction" across threads
-        // >> are bit right shift (divided by 2), If blockDim.x = 256, then offset = 128
-        for (int offset = blockDim.x >> 1; offset > 0; offset >>= 1) { 
-            """
-            So we start by pairing threads:
-            * thread 0 with 128,
-            * thread 1 with 129,
-            """
-            if (thread_idx < offset) { // Allow only active threads in each reduction stage
-                // Accumulate partner partial sums into the lower index slot
-                shared_buffer[thread_idx] += shared_buffer[thread_idx + offset]; 
-            }
-            __syncthreads(); // Synchronize before the next reduction step
+        const acc_t dot = warp_reduce_sum(partial_dot); // Reduce within the warp to form the full dot product
+        if (lane_id == 0 && warp_active) { // One thread per warp commits the scaled score
+            shared_scores[key_slot] = valid_key ? dot * scale : -std::numeric_limits<acc_t>::infinity();
         }
-        if (thread_idx == 0) { // The leading thread now holds the full dot product
-            // Store the scaled attention score for this stride slot
-            shared_scores[key_slot] = shared_buffer[0] * scale; 
-        }
-        __syncthreads(); // Synchronize before processing the next key vector
     }
+    __syncthreads(); // Make sure all attention scores are written before normalization
 
     // Initialize the running maximum used for softmax normalization
     acc_t local_max = -std::numeric_limits<acc_t>::infinity(); 
